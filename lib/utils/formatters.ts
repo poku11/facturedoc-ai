@@ -1,110 +1,121 @@
-import { format, parseISO, isValid } from 'date-fns'
+import { format, parseISO, differenceInDays } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
 export function formatCurrency(amount: number, currency = 'EUR'): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)
-}
-
-export function formatDate(date: string | Date | null | undefined): string {
-  if (!date) return ''
-  try {
-    const d = typeof date === 'string' ? parseISO(date) : date
-    if (!isValid(d)) return ''
-    return format(d, 'dd MMMM yyyy', { locale: fr })
-  } catch {
-    return ''
-  }
-}
-
-export function formatDateShort(date: string | Date | null | undefined): string {
-  if (!date) return ''
-  try {
-    const d = typeof date === 'string' ? parseISO(date) : date
-    if (!isValid(d)) return ''
-    return format(d, 'dd/MM/yyyy')
-  } catch {
-    return ''
-  }
+    return new Intl.NumberFormat('fr-FR', {
+          style: 'currency',
+          currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+    }).format(amount)
 }
 
 export function formatNumber(num: number, decimals = 2): string {
-  return new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(num)
+    return new Intl.NumberFormat('fr-FR', {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals,
+    }).format(num)
 }
 
-export function calculateLineTotal(
-  quantity: number,
-  unitPrice: number,
-  discountPercent = 0
-): number {
-  const subtotal = quantity * unitPrice
-  const discount = subtotal * (discountPercent / 100)
-  return Math.round((subtotal - discount) * 100) / 100
+export function formatDate(date: string | Date, formatStr = 'dd/MM/yyyy'): string {
+    if (!date) return ''
+    try {
+          const d = typeof date === 'string' ? parseISO(date) : date
+          return format(d, formatStr, { locale: fr })
+    } catch {
+          return ''
+    }
 }
 
-export function calculateDocumentTotals(
-  lines: Array<{ quantity: number; unit_price: number; tax_rate: number; discount_percent: number }>
-) {
-  let subtotal = 0
-  let taxAmount = 0
-
-  for (const line of lines) {
-    const lineSubtotal = line.quantity * line.unit_price
-    const discount = lineSubtotal * (line.discount_percent / 100)
-    const lineNet = lineSubtotal - discount
-    const lineTax = lineNet * (line.tax_rate / 100)
-    subtotal += lineNet
-    taxAmount += lineTax
-  }
-
-  subtotal = Math.round(subtotal * 100) / 100
-  taxAmount = Math.round(taxAmount * 100) / 100
-  const total = Math.round((subtotal + taxAmount) * 100) / 100
-
-  return { subtotal, taxAmount, total }
+export function formatDateLong(date: string | Date): string {
+    return formatDate(date, 'dd MMMM yyyy')
 }
 
-export function generateDocumentNumber(type: 'invoice' | 'quote'): string {
-  const prefix = type === 'invoice' ? 'FACT' : 'DEVIS'
-  const year = new Date().getFullYear()
-  const random = Math.floor(Math.random() * 9000) + 1000
-  return `${prefix}-${year}-${random}`
+export function formatDatetime(date: string | Date): string {
+    return formatDate(date, 'dd/MM/yyyy HH:mm')
+}
+
+export function getDaysUntilDue(dueDate: string): number {
+    if (!dueDate) return 0
+    try {
+          const due = parseISO(dueDate)
+          const today = new Date()
+          return differenceInDays(due, today)
+    } catch {
+          return 0
+    }
+}
+
+export function getDaysOverdue(dueDate: string): number {
+    const days = getDaysUntilDue(dueDate)
+    return days < 0 ? Math.abs(days) : 0
 }
 
 export function getStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    draft: 'Brouillon',
-    sent: 'Envoyé',
-    viewed: 'Vu',
-    signed: 'Signé',
-    paid: 'Payé',
-    overdue: 'En retard',
-    cancelled: 'Annulé',
-  }
-  return labels[status] || status
+    const labels: Record<string, string> = {
+          draft: 'Brouillon',
+          sent: 'Envoyé',
+          viewed: 'Vu',
+          signed: 'Signé',
+          paid: 'Payé',
+          cancelled: 'Annulé',
+          overdue: 'En retard',
+    }
+    return labels[status] || status
 }
 
-export function getStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    draft: 'gray',
-    sent: 'blue',
-    viewed: 'purple',
-    signed: 'indigo',
-    paid: 'green',
-    overdue: 'red',
-    cancelled: 'gray',
-  }
-  return colors[status] || 'gray'
+export function getDocumentTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+          devis: 'Devis',
+          facture: 'Facture',
+          avoir: 'Avoir',
+    }
+    return labels[type] || type
 }
 
 export function truncate(str: string, maxLength: number): string {
-  if (str.length <= maxLength) return str
-  return str.slice(0, maxLength - 3) + '...'
+    if (!str) return ''
+    if (str.length <= maxLength) return str
+    return str.substring(0, maxLength) + '...'
+}
+
+export function slugify(str: string): string {
+    return str
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+}
+
+export function generateViewUrl(token: string, baseUrl?: string): string {
+    const base = baseUrl || process.env.NEXT_PUBLIC_APP_URL || ''
+    return `${base}/view/${token}`
+}
+
+export function generateSignUrl(token: string, baseUrl?: string): string {
+    const base = baseUrl || process.env.NEXT_PUBLIC_APP_URL || ''
+    return `${base}/sign/${token}`
+}
+
+export function cn(...classes: (string | undefined | null | false)[]): string {
+    return classes.filter(Boolean).join(' ')
+}
+
+export function getInitials(name: string): string {
+    if (!name) return '?'
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2)
+}
+
+export function formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`
 }
