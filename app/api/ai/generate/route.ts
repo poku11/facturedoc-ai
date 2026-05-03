@@ -1,114 +1,143 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { generateDocument } from '@/lib/ai/generateDocument'
-import { generateDocumentNumber, calculateDocumentTotals } from '@/lib/utils/formatters'
+import { createServerClient } from '../../../../../../lib/supabase/server'
+import { generateDocumentWithAI, calculateDocumentTotals, calculateLineTotals } from '../../../../../../lib/ai/generateDocument'
+import { DocumentType } from '../../../../../../lib/supabase/types'
+import { addDays, format } from 'date-fns'
 
 export async function POST(request: NextRequest) {
-  try {
-    const supabase = createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    try {
+          const supabase = createServerClient()
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+          if (authError || !user) {
+                  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+          }
 
-    const { type, userInput, clientId } = await request.json()
+      // Get user profile for limits and context
+      const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
 
-    if (!type || !userInput) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
-    }
+      if (profileError || !profile) {
+              return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+      }
 
-    // Get user profile
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
+      const body = await request.json()
+          const { type, description, clientId } = body as {
+                  type: DocumentType
+                  description: string
+                  clientId?: string
+          }
 
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
-    }
+      if (!type || !description) {
+              return NextResponse.json({ error: 'type and description are required' }, { status: 400 })
+      }
 
-    // Check plan limits
-    const limits = { free: 5, starter: 50, pro: 500, business: Infinity }
-    const limit = limits[profile.plan as keyof typeof limits]
-    if (profile.documents_count >= limit) {
-      return NextResponse.json({
-        error: 'Limite de documents atteinte. Passez à un plan supérieur.',
-        upgrade_required: true,
-      }, { status: 403 })
-    }
+      // Get client info if provided
+      let clientInfo: string | undefined
+          let clientData = null
+          if (clientId) {
+                  const { data: client } = await supabase
+                    .from('clients')
+                    .select('*')
+                    .eq('id', clientId)
+                    .eq('user_id', user.id)
+                    .single()
 
-    // Get client if specified
-    let client = null
-    if (clientId) {
-      const { data } = await supabase.from('clients').select('*').eq('id', clientId).single()
-      client = data
-    }
+            if (client) {
+                      clientData = client
+                      clientInfo = `Nom: ${client.name}, Email: ${client.email || 'N/A'}, Ville: ${client.city || 'N/A'}`
+            }
+          }
 
-    // Generate document with AI
-    const generated = await generateDocument({ type, userInput, profile, client, userId: user.id })
+      const companyInfo = profile.company_name
+            ? `Entreprise: ${profile.company_name}, SIRET: ${profile.company_siret || 'N/A'}, TVA: ${profile.company_tva || 'N/A'}`
+              : undefined
 
-    // Calculate totals
-    const { subtotal, taxAmount, total } = calculateDocumentTotals(generated.lines)
-
-    // Save document to database
-    const { data: document, error: docError } = await supabase
-      .from('documents')
-      .insert({
-        user_id: user.id,
-        client_id: clientId || null,
-        type,
-        number: generated.number || generateDocumentNumber(type),
-        title: generated.title,
-        issue_date: generated.issue_date,
-        due_date: generated.due_date,
-        currency: generated.currency || 'EUR',
-        subtotal,
-        tax_rate: 20,
-        tax_amount: taxAmount,
-        total,
-        notes: generated.notes,
-        terms: generated.terms,
-        payment_instructions: generated.payment_instructions,
-        ai_generated: true,
-        status: 'draft',
+      // Generate with AI
+      const generated = await generateDocumentWithAI({
+              type,
+              userDescription: description,
+              clientInfo,
+              companyInfo,
       })
-      .select()
-      .single()
 
-    if (docError) throw docError
+      // Generate document number
+      const { data: docNumber } = await supabase
+            .rpc('generate_document_number', { p_user_id: user.id, p_type: type })
 
-    // Save document lines
-    if (generated.lines.length > 0) {
-      const lines = generated.lines.map((line, idx) => ({
-        document_id: document.id,
-        sort_order: idx,
-        description: line.description,
-        quantity: line.quantity,
-        unit: line.unit || 'unité',
-        unit_price: line.unit_price,
-        tax_rate: line.tax_rate || 20,
-        discount_percent: line.discount_percent || 0,
-        total: line.total || line.quantity * line.unit_price,
-      }))
+      // Calculate totals
+      const totals = calculateDocumentTotals(generated.lines)
+          const issueDate = new Date()
+          const dueDate = type === 'facture' ? addDays(issueDate, generated.due_days) : null
+          const validityDate = type === 'devis' ? addDays(issueDate, generated.validity_days) : null
 
-      const { error: linesError } = await supabase.from('document_lines').insert(lines)
-      if (linesError) throw linesError
+      // Create document
+      const { data: document, error: docError } = await supabase
+            .from('documents')
+            .insert({
+                      user_id: user.id,
+                      client_id: clientId || null,
+                      type,
+                      status: 'draft',
+                      number: docNumber || `${type.toUpperCase()}-${Date.now()}`,
+                      title: generated.title,
+                      description: generated.description,
+                      issue_date: format(issueDate, 'yyyy-MM-dd'),
+                      due_date: dueDate ? format(dueDate, 'yyyy-MM-dd') : null,
+                      validity_date: validityDate ? format(validityDate, 'yyyy-MM-dd') : null,
+                      subtotal: totals.subtotal,
+                      tva_rate: 20,
+                      tva_amount: totals.tva_amount,
+                      total: totals.total,
+                      payment_terms: generated.payment_terms,
+                      notes: generated.notes,
+                      footer_text: generated.footer_text,
+                      ai_generated: true,
+            })
+            .select('*')
+            .single()
+
+      if (docError || !document) {
+              console.error('Error creating document:', docError)
+              return NextResponse.json({ error: 'Failed to create document' }, { status: 500 })
+      }
+
+      // Create document lines
+      const lineInserts = generated.lines.map((line, index) => {
+              const lineTotals = calculateLineTotals(line)
+              return {
+                        document_id: document.id,
+                        position: index,
+                        description: line.description,
+                        quantity: line.quantity,
+                        unit: line.unit,
+                        unit_price: line.unit_price,
+                        tva_rate: line.tva_rate,
+                        ...lineTotals,
+              }
+      })
+
+      const { data: lines, error: linesError } = await supabase
+            .from('document_lines')
+            .insert(lineInserts)
+            .select('*')
+
+      if (linesError) {
+              console.error('Error creating lines:', linesError)
+      }
+
+      return NextResponse.json({
+              document: { ...document, client: clientData, lines: lines || [] },
+              generated,
+      })
+    } catch (error) {
+          console.error('AI generation error:', error)
+          return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Internal server error' },
+            { status: 500 }
+                )
     }
-
-    // Update documents count
-    await supabase
-      .from('profiles')
-      .update({ documents_count: profile.documents_count + 1 })
-      .eq('id', user.id)
-
-    return NextResponse.json({ document, success: true })
-  } catch (error) {
-    console.error('AI generation error:', error)
-    return NextResponse.json(
-      { error: 'Erreur lors de la génération du document' },
-      { status: 500 }
-    )
-  }
 }
