@@ -1,110 +1,129 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { createAdminClient } from '../supabase/server'
-import type { Profile, Client, DocumentType, DocumentLine } from '../supabase/types'
+import { DocumentType, DocumentLine } from '../supabase/types'
+import { getDocumentGenerationPrompt } from './prompts'
 
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+    apiKey: process.env.ANTHROPIC_API_KEY!,
 })
 
-interface GenerateDocumentInput {
-  type: DocumentType
-  userInput: string
-  profile: Profile
-  client?: Client | null
-  userId: string
+export interface GeneratedDocumentData {
+    title: string
+    description: string
+    lines: Array<{
+      description: string
+      quantity: number
+      unit: string
+      unit_price: number
+      tva_rate: number
+    }>
+    payment_terms: string
+    notes: string
+    footer_text: string
+    validity_days: number
+    due_days: number
 }
 
-interface GeneratedDocument {
-  title: string
-  number: string
-  issue_date: string
-  due_date: string
-  currency: string
-  lines: Omit<DocumentLine, 'id' | 'document_id' | 'created_at'>[]
-  notes: string
-  terms: string
-  payment_instructions: string
+export interface GenerateDocumentOptions {
+    type: DocumentType
+    userDescription: string
+    clientInfo?: string
+    companyInfo?: string
 }
 
-export async function generateDocument(input: GenerateDocumentInput): Promise<GeneratedDocument> {
-  const { type, userInput, profile, client } = input
-  const today = new Date().toISOString().split('T')[0]
-  const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  const year = new Date().getFullYear()
-  const prefix = type === 'invoice' ? 'FACT' : 'DEVIS'
-  const randomNum = Math.floor(Math.random() * 9000) + 1000
+export async function generateDocumentWithAI(
+    options: GenerateDocumentOptions
+  ): Promise<GeneratedDocumentData> {
+    const { type, userDescription, clientInfo, companyInfo } = options
 
-  const systemPrompt = `Tu es un expert-comptable français. Génère un ${type === 'invoice' ? 'facture' : 'devis'} professionnel en JSON.
-Réponds UNIQUEMENT avec du JSON valide, sans markdown, sans explication.`
+  const prompt = getDocumentGenerationPrompt(type, userDescription, clientInfo, companyInfo)
 
-  const userPrompt = `Génère un ${type === 'invoice' ? 'facture' : 'devis'} pour:
-Émetteur: ${profile.company_name || profile.full_name || 'Mon entreprise'}
-Client: ${client ? client.name + (client.company ? ' (' + client.company + ')' : '') : 'À définir'}
-Demande: ${userInput}
-
-Format JSON requis:
-{
-  "title": "Titre du document",
-  "number": "${prefix}-${year}-${randomNum}",
-  "issue_date": "${today}",
-  "due_date": "${dueDate}",
-  "currency": "EUR",
-  "lines": [
-    {"description": "...", "quantity": 1, "unit": "unité", "unit_price": 100, "tax_rate": 20, "discount_percent": 0, "sort_order": 0}
-  ],
-  "notes": "Merci pour votre confiance.",
-  "terms": "Paiement à 30 jours.",
-  "payment_instructions": "Virement bancaire - IBAN: FR76..."
-}`
-
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    messages: [{ role: 'user', content: userPrompt }],
-    system: systemPrompt,
+  const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        messages: [
+          {
+                    role: 'user',
+                    content: prompt,
+          },
+              ],
   })
 
-  const content = response.content[0]
-  if (content.type !== 'text') throw new Error('Invalid response from AI')
+  const content = message.content[0]
+    if (content.type !== 'text') {
+          throw new Error('Unexpected response type from AI')
+    }
 
-  let jsonText = content.text.trim()
-  if (jsonText.startsWith('```')) {
-    jsonText = jsonText.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+  let rawText = content.text.trim()
+
+  // Remove markdown code blocks if present
+  rawText = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '')
+    rawText = rawText.replace(/\s*```$/i, '')
+    rawText = rawText.trim()
+
+  let parsed: GeneratedDocumentData
+    try {
+          parsed = JSON.parse(rawText) as GeneratedDocumentData
+    } catch {
+          // Try to extract JSON from the response
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+          if (!jsonMatch) {
+                  throw new Error('Could not parse AI response as JSON')
+          }
+          parsed = JSON.parse(jsonMatch[0]) as GeneratedDocumentData
+    }
+
+  // Validate and sanitize the parsed data
+  if (!parsed.lines || !Array.isArray(parsed.lines) || parsed.lines.length === 0) {
+        throw new Error('AI response missing document lines')
   }
 
-  const parsed: GeneratedDocument = JSON.parse(jsonText)
-
-  // Calculate totals for each line
-  const lines = parsed.lines.map((line, idx) => {
-    const subtotal = line.quantity * line.unit_price
-    const discount = subtotal * (line.discount_percent / 100)
-    const total = subtotal - discount
-    return {
-      ...line,
-      sort_order: idx,
-      total,
-    }
-  })
-
-  return { ...parsed, lines }
+  // Ensure all required fields have defaults
+  return {
+        title: parsed.title || `${type.charAt(0).toUpperCase() + type.slice(1)} - ${new Date().toLocaleDateString('fr-FR')}`,
+        description: parsed.description || '',
+        lines: parsed.lines.map((line, index) => ({
+                description: line.description || `Ligne ${index + 1}`,
+                quantity: Number(line.quantity) || 1,
+                unit: line.unit || 'unité',
+                unit_price: Number(line.unit_price) || 0,
+                tva_rate: Number(line.tva_rate) || 20,
+        })),
+        payment_terms: parsed.payment_terms || 'Paiement à 30 jours',
+        notes: parsed.notes || '',
+        footer_text: parsed.footer_text || '',
+        validity_days: Number(parsed.validity_days) || 30,
+        due_days: Number(parsed.due_days) || 30,
+  }
 }
 
-export async function chatWithAI(
-  documentContext: string,
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  newMessage: string
-): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1000,
-    system: 'Tu es un assistant expert en comptabilité française. Document actuel: ' + documentContext,
-    messages: [
-      ...messages.map(m => ({ role: m.role, content: m.content })),
-      { role: 'user', content: newMessage },
-    ],
-  })
+export function calculateDocumentTotals(
+    lines: Array<{ quantity: number; unit_price: number; tva_rate: number }>
+  ): { subtotal: number; tva_amount: number; total: number } {
+    let subtotal = 0
+    let tva_amount = 0
 
-  const content = response.content[0]
-  if (content.type !== 'text') throw new Error('Invalid AI response')
-  return content.text
+  for (const line of lines) {
+        const lineHT = line.quantity * line.unit_price
+        const lineTVA = lineHT * (line.tva_rate / 100)
+        subtotal += lineHT
+        tva_amount += lineTVA
+  }
+
+  return {
+        subtotal: Math.round(subtotal * 100) / 100,
+        tva_amount: Math.round(tva_amount * 100) / 100,
+        total: Math.round((subtotal + tva_amount) * 100) / 100,
+  }
+}
+
+export function calculateLineTotals(line: {
+    quantity: number
+    unit_price: number
+    tva_rate: number
+}): { total_ht: number; total_tva: number; total_ttc: number } {
+    const total_ht = Math.round(line.quantity * line.unit_price * 100) / 100
+    const total_tva = Math.round(total_ht * (line.tva_rate / 100) * 100) / 100
+    const total_ttc = Math.round((total_ht + total_tva) * 100) / 100
+
+  return { total_ht, total_tva, total_ttc }
 }
