@@ -1,0 +1,19 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "0 9 * * *"
+    }
+  ],
+  "functions": {
+    "app/api/ai/generate/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/ai/chat/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/documents/[id]/pdf/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
