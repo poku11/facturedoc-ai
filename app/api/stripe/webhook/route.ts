@@ -1,94 +1,177 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { stripe } from '@/lib/stripe'
-import { createAdminClient } from '@/lib/supabase/server'
+import { constructWebhookEvent, getPlanFromPriceId } from '../../../../lib/stripe'
+import { createClient } from '@supabase/supabase-js'
 import Stripe from 'stripe'
 
-export const config = { api: { bodyParser: false } }
+// Use service role for webhook (no user context)
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
 
 export async function POST(request: NextRequest) {
-  const body = await request.text()
-  const sig = request.headers.get('stripe-signature')!
+    const body = await request.text()
+    const signature = request.headers.get('stripe-signature')!
 
   let event: Stripe.Event
+    try {
+          event = constructWebhookEvent(body, signature)
+    } catch (err) {
+          console.error('Webhook signature verification failed:', err)
+          return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
+    }
+
   try {
-    event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET!)
-  } catch (err) {
-    console.error('Webhook signature error:', err)
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
+        switch (event.type) {
+          case 'checkout.session.completed': {
+                    const session = event.data.object as Stripe.Checkout.Session
+                    const userId = session.metadata?.userId
+                    const plan = session.metadata?.plan
+                    const subscriptionId = session.subscription as string
+
+                    if (userId && plan) {
+                                await supabase
+                                  .from('profiles')
+                                  .update({
+                                                  plan,
+                                                  stripe_subscription_id: subscriptionId,
+                                                  subscription_status: 'active',
+                                                  updated_at: new Date().toISOString(),
+                                  })
+                                  .eq('id', userId)
+
+                      // Create notification
+                      await supabase.from('notifications').insert({
+                                    user_id: userId,
+                                    type: 'subscription_activated',
+                                    title: `Plan ${plan} activé`,
+                                    message: `Votre abonnement ${plan} a été activé avec succès.`,
+                      })
+                    }
+                    break
+          }
+
+          case 'customer.subscription.updated': {
+                    const subscription = event.data.object as Stripe.Subscription
+                    const priceId = subscription.items.data[0]?.price?.id
+                    const plan = getPlanFromPriceId(priceId)
+                    const customerId = subscription.customer as string
+
+                    const { data: profile } = await supabase
+                      .from('profiles')
+                      .select('id')
+                      .eq('stripe_customer_id', customerId)
+                      .single()
+
+                    if (profile) {
+                                await supabase
+                                  .from('profiles')
+                                  .update({
+                                                  plan: subscription.status === 'active' ? plan : 'free',
+                                                  subscription_status: subscription.status,
+                                                  updated_at: new Date().toISOString(),
+                                  })
+                                  .eq('id', profile.id)
+                    }
+                    break
+          }
+
+          case 'customer.subscription.deleted': {
+                    const subscription = event.data.object as Stripe.Subscription
+                    const customerId = subscription.customer as string
+
+                    const { data: profile } = await supabase
+                      .from('profiles')
+                      .select('id')
+                      .eq('stripe_customer_id', customerId)
+                      .single()
+
+                    if (profile) {
+                                await supabase
+                                  .from('profiles')
+                                  .update({
+                                                  plan: 'free',
+                                                  stripe_subscription_id: null,
+                                                  subscription_status: 'cancelled',
+                                                  updated_at: new Date().toISOString(),
+                                  })
+                                  .eq('id', profile.id)
+
+                      await supabase.from('notifications').insert({
+                                    user_id: profile.id,
+                                    type: 'subscription_cancelled',
+                                    title: 'Abonnement annulé',
+                                    message: 'Votre abonnement a été annulé. Vous êtes maintenant sur le plan gratuit.',
+                      })
+                    }
+                    break
+          }
+
+          case 'payment_link.payment_method_used': {
+                    // Payment via payment link completed
+                    const paymentIntent = event.data.object as Stripe.PaymentIntent
+                    const documentId = paymentIntent.metadata?.documentId
+
+                    if (documentId) {
+                                await supabase
+                                  .from('documents')
+                                  .update({
+                                                  status: 'paid',
+                                                  paid_at: new Date().toISOString(),
+                                                  stripe_payment_intent_id: paymentIntent.id,
+                                                  updated_at: new Date().toISOString(),
+                                  })
+                                  .eq('id', documentId)
+                    }
+                    break
+          }
+
+          case 'payment_intent.succeeded': {
+                    const paymentIntent = event.data.object as Stripe.PaymentIntent
+                    const documentId = paymentIntent.metadata?.documentId
+
+                    if (documentId) {
+                                const { data: doc } = await supabase
+                                  .from('documents')
+                                  .select('user_id, number')
+                                  .eq('id', documentId)
+                                  .single()
+
+                      await supabase
+                                  .from('documents')
+                                  .update({
+                                                  status: 'paid',
+                                                  paid_at: new Date().toISOString(),
+                                                  stripe_payment_intent_id: paymentIntent.id,
+                                  })
+                                  .eq('id', documentId)
+
+                      if (doc) {
+                                    await supabase.from('notifications').insert({
+                                                    user_id: doc.user_id,
+                                                    document_id: documentId,
+                                                    type: 'payment_received',
+                                                    title: 'Paiement reçu',
+                                                    message: `Le paiement de la facture ${doc.number} a été reçu.`,
+                                    })
+                      }
+                    }
+                    break
+          }
+
+          default:
+                    console.log(`Unhandled event type: ${event.type}`)
+        }
+
+      return NextResponse.json({ received: true })
+  } catch (error) {
+        console.error('Webhook handler error:', error)
+        return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 })
   }
+}
 
-  const supabase = createAdminClient()
-
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object as Stripe.Checkout.Session
-      if (session.mode === 'subscription' && session.customer && session.subscription) {
-        const subscription = await stripe.subscriptions.retrieve(session.subscription as string)
-        const priceId = subscription.items.data[0].price.id
-
-        let plan = 'free'
-        if (priceId === process.env.STRIPE_PRICE_STARTER) plan = 'starter'
-        else if (priceId === process.env.STRIPE_PRICE_PRO) plan = 'pro'
-        else if (priceId === process.env.STRIPE_PRICE_BUSINESS) plan = 'business'
-
-        await supabase
-          .from('profiles')
-          .update({
-            plan,
-            stripe_customer_id: session.customer as string,
-            stripe_subscription_id: session.subscription as string,
-            stripe_subscription_status: subscription.status,
-          })
-          .eq('stripe_customer_id', session.customer as string)
-      }
-      break
-    }
-
-    case 'customer.subscription.updated': {
-      const subscription = event.data.object as Stripe.Subscription
-      const priceId = subscription.items.data[0].price.id
-
-      let plan = 'free'
-      if (priceId === process.env.STRIPE_PRICE_STARTER) plan = 'starter'
-      else if (priceId === process.env.STRIPE_PRICE_PRO) plan = 'pro'
-      else if (priceId === process.env.STRIPE_PRICE_BUSINESS) plan = 'business'
-
-      await supabase
-        .from('profiles')
-        .update({
-          plan,
-          stripe_subscription_status: subscription.status,
-        })
-        .eq('stripe_subscription_id', subscription.id)
-      break
-    }
-
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription
-      await supabase
-        .from('profiles')
-        .update({
-          plan: 'free',
-          stripe_subscription_id: null,
-          stripe_subscription_status: 'canceled',
-        })
-        .eq('stripe_subscription_id', subscription.id)
-      break
-    }
-
-    case 'payment_link.payment_completed':
-    case 'payment_intent.succeeded': {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent
-      const documentId = paymentIntent.metadata?.document_id
-      if (documentId) {
-        await supabase
-          .from('documents')
-          .update({ status: 'paid', paid_at: new Date().toISOString() })
-          .eq('id', documentId)
-      }
-      break
-    }
-  }
-
-  return NextResponse.json({ received: true })
+export const config = {
+    api: {
+          bodyParser: false,
+    },
 }
