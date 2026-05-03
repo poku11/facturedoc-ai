@@ -1,175 +1,242 @@
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
-
-export interface Database {
-  public: {
-    Tables: {
-      profiles: {
-        Row: {
-          id: string
-          email: string
-          full_name: string | null
-          company_name: string | null
-          company_address: string | null
-          company_city: string | null
-          company_postal_code: string | null
-          company_country: string
-          company_phone: string | null
-          company_email: string | null
-          company_siret: string | null
-          company_vat_number: string | null
-          company_logo_url: string | null
-          plan: 'free' | 'starter' | 'pro' | 'business'
-          stripe_customer_id: string | null
-          stripe_subscription_id: string | null
-          stripe_subscription_status: string | null
-          documents_count: number
-          ai_credits_used: number
-          created_at: string
-          updated_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['profiles']['Row']>
-        Update: Partial<Database['public']['Tables']['profiles']['Row']>
-      }
-      clients: {
-        Row: {
-          id: string
-          user_id: string
-          name: string
-          email: string | null
-          phone: string | null
-          company: string | null
-          address: string | null
-          city: string | null
-          postal_code: string | null
-          country: string
-          siret: string | null
-          vat_number: string | null
-          notes: string | null
-          total_invoiced: number
-          documents_count: number
-          created_at: string
-          updated_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['clients']['Row']>
-        Update: Partial<Database['public']['Tables']['clients']['Row']>
-      }
-      documents: {
-        Row: {
-          id: string
-          user_id: string
-          client_id: string | null
-          template_id: string | null
-          type: 'invoice' | 'quote'
-          status: 'draft' | 'sent' | 'viewed' | 'signed' | 'paid' | 'overdue' | 'cancelled'
-          number: string
-          title: string | null
-          issue_date: string
-          due_date: string | null
-          currency: string
-          subtotal: number
-          tax_rate: number
-          tax_amount: number
-          discount_amount: number
-          total: number
-          notes: string | null
-          terms: string | null
-          payment_instructions: string | null
-          view_token: string | null
-          sign_token: string | null
-          viewed_at: string | null
-          signed_at: string | null
-          signature_data: string | null
-          signature_ip: string | null
-          paid_at: string | null
-          stripe_payment_link_id: string | null
-          stripe_payment_link_url: string | null
-          pdf_url: string | null
-          ai_generated: boolean
-          sent_count: number
-          last_sent_at: string | null
-          reminder_count: number
-          last_reminder_at: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['documents']['Row']>
-        Update: Partial<Database['public']['Tables']['documents']['Row']>
-      }
-      document_lines: {
-        Row: {
-          id: string
-          document_id: string
-          sort_order: number
-          description: string
-          quantity: number
-          unit: string | null
-          unit_price: number
-          tax_rate: number
-          discount_percent: number
-          total: number
-          created_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['document_lines']['Row']>
-        Update: Partial<Database['public']['Tables']['document_lines']['Row']>
-      }
-      ai_chats: {
-        Row: {
-          id: string
-          document_id: string
-          user_id: string
-          role: 'user' | 'assistant'
-          content: string
-          created_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['ai_chats']['Row']>
-        Update: never
-      }
-      email_logs: {
-        Row: {
-          id: string
-          document_id: string
-          user_id: string
-          recipient_email: string
-          subject: string
-          type: 'document_sent' | 'reminder_d3' | 'reminder_d7' | 'reminder_d14' | 'payment_confirmed'
-          status: 'pending' | 'sent' | 'failed' | 'bounced'
-          resend_id: string | null
-          error_message: string | null
-          sent_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['email_logs']['Row']>
-        Update: Partial<Database['public']['Tables']['email_logs']['Row']>
-      }
-      notifications: {
-        Row: {
-          id: string
-          user_id: string
-          type: string
-          title: string
-          message: string | null
-          document_id: string | null
-          read: boolean
-          created_at: string
-        }
-        Insert: Partial<Database['public']['Tables']['notifications']['Row']>
-        Update: Partial<Database['public']['Tables']['notifications']['Row']>
-      }
-    }
-  }
-}
-
-export type Profile = Database['public']['Tables']['profiles']['Row']
-export type Client = Database['public']['Tables']['clients']['Row']
-export type Document = Database['public']['Tables']['documents']['Row']
-export type DocumentLine = Database['public']['Tables']['document_lines']['Row']
-export type AiChat = Database['public']['Tables']['ai_chats']['Row']
-export type EmailLog = Database['public']['Tables']['email_logs']['Row']
-export type Notification = Database['public']['Tables']['notifications']['Row']
-export type DocumentType = 'invoice' | 'quote'
-export type DocumentStatus = 'draft' | 'sent' | 'viewed' | 'signed' | 'paid' | 'overdue' | 'cancelled'
 export type Plan = 'free' | 'starter' | 'pro' | 'business'
+export type DocumentType = 'devis' | 'facture' | 'avoir'
+export type DocumentStatus = 'draft' | 'sent' | 'viewed' | 'signed' | 'paid' | 'cancelled' | 'overdue'
+export type ChatRole = 'user' | 'assistant'
+export type EmailType = 'document_sent' | 'reminder_3' | 'reminder_7' | 'reminder_14' | 'payment_received' | 'document_signed'
 
-export type DocumentWithClient = Document & {
-  client: Client | null
-  lines: DocumentLine[]
+export interface Profile {
+    id: string
+    email: string
+    full_name: string | null
+    company_name: string | null
+    company_address: string | null
+    company_city: string | null
+    company_zip: string | null
+    company_country: string
+    company_phone: string | null
+    company_email: string | null
+    company_website: string | null
+    company_siret: string | null
+    company_tva: string | null
+    company_logo_url: string | null
+    plan: Plan
+    stripe_customer_id: string | null
+    stripe_subscription_id: string | null
+    subscription_status: string
+    documents_count: number
+    created_at: string
+    updated_at: string
 }
+
+export interface Client {
+    id: string
+    user_id: string
+    name: string
+    email: string | null
+    phone: string | null
+    address: string | null
+    city: string | null
+    zip: string | null
+    country: string
+    siret: string | null
+    tva_number: string | null
+    notes: string | null
+    created_at: string
+    updated_at: string
+}
+
+export interface DocumentLine {
+    id: string
+    document_id: string
+    position: number
+    description: string
+    quantity: number
+    unit: string
+    unit_price: number
+    tva_rate: number
+    total_ht: number
+    total_tva: number
+    total_ttc: number
+    created_at: string
+}
+
+export interface Document {
+    id: string
+    user_id: string
+    client_id: string | null
+    type: DocumentType
+    status: DocumentStatus
+    number: string
+    title: string | null
+    description: string | null
+    issue_date: string
+    due_date: string | null
+    validity_date: string | null
+    subtotal: number
+    tva_rate: number
+    tva_amount: number
+    total: number
+    currency: string
+    payment_terms: string | null
+    notes: string | null
+    footer_text: string | null
+    view_token: string
+    sign_token: string
+    viewed_at: string | null
+    signed_at: string | null
+    signature_image: string | null
+    signature_ip: string | null
+    paid_at: string | null
+    stripe_payment_link: string | null
+    stripe_payment_intent_id: string | null
+    pdf_url: string | null
+    sent_at: string | null
+    reminder_3_sent_at: string | null
+    reminder_7_sent_at: string | null
+    reminder_14_sent_at: string | null
+    template_id: string
+    ai_generated: boolean
+    created_at: string
+    updated_at: string
+    // Relations
+  client?: Client | null
+    lines?: DocumentLine[]
+}
+
+export interface Template {
+    id: string
+    user_id: string | null
+    name: string
+    description: string | null
+    type: string | null
+    is_system: boolean
+    content: Record<string, unknown> | null
+    thumbnail_url: string | null
+    created_at: string
+}
+
+export interface Clause {
+    id: string
+    user_id: string
+    title: string
+    content: string
+    type: string
+    created_at: string
+}
+
+export interface AIChat {
+    id: string
+    document_id: string
+    user_id: string
+    role: ChatRole
+    content: string
+    created_at: string
+}
+
+export interface EmailLog {
+    id: string
+    document_id: string | null
+    user_id: string
+    recipient_email: string
+    subject: string
+    type: EmailType
+    status: string
+    resend_id: string | null
+    sent_at: string
+}
+
+export interface Notification {
+    id: string
+    user_id: string
+    document_id: string | null
+    type: string
+    title: string
+    message: string | null
+    read: boolean
+    created_at: string
+}
+
+export interface PlanLimits {
+    documents: number
+    clients: number
+    storage: number
+    aiGenerations: number
+    features: string[]
+}
+
+export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
+    free: {
+          documents: 3,
+          clients: 5,
+          storage: 100,
+          aiGenerations: 3,
+          features: ['basic_templates', 'pdf_export']
+    },
+    starter: {
+          documents: 50,
+          clients: 50,
+          storage: 1000,
+          aiGenerations: 50,
+          features: ['basic_templates', 'pdf_export', 'email_send', 'stripe_payment', 'reminders']
+    },
+    pro: {
+          documents: 500,
+          clients: 500,
+          storage: 5000,
+          aiGenerations: 500,
+          features: ['all_templates', 'pdf_export', 'email_send', 'stripe_payment', 'reminders', 'signature', 'ai_chat', 'custom_branding']
+    },
+    business: {
+          documents: -1,
+          clients: -1,
+          storage: -1,
+          aiGenerations: -1,
+          features: ['all_templates', 'pdf_export', 'email_send', 'stripe_payment', 'reminders', 'signature', 'ai_chat', 'custom_branding', 'api_access', 'priority_support', 'white_label']
+    }
+}
+
+export interface StripePlan {
+    id: Plan
+    name: string
+    description: string
+    price: number
+    priceId: string | undefined
+    features: string[]
+    popular?: boolean
+}
+
+export const STRIPE_PLANS: StripePlan[] = [
+  {
+        id: 'free',
+        name: 'Free',
+        description: 'Pour commencer',
+        price: 0,
+        priceId: undefined,
+        features: ['3 documents/mois', '5 clients', 'Templates basiques', 'Export PDF']
+  },
+  {
+        id: 'starter',
+        name: 'Starter',
+        description: 'Pour les indépendants',
+        price: 19,
+        priceId: process.env.STRIPE_PRICE_STARTER,
+        features: ['50 documents/mois', '50 clients', 'Envoi email', 'Paiement Stripe', 'Relances auto']
+  },
+  {
+        id: 'pro',
+        name: 'Pro',
+        description: 'Pour les PME',
+        price: 49,
+        priceId: process.env.STRIPE_PRICE_PRO,
+        popular: true,
+        features: ['500 documents/mois', '500 clients', 'Signature électronique', 'Chat IA', 'Branding personnalisé', 'Tous les templates']
+  },
+  {
+        id: 'business',
+        name: 'Business',
+        description: 'Pour les grandes équipes',
+        price: 99,
+        priceId: process.env.STRIPE_PRICE_BUSINESS,
+        features: ['Documents illimités', 'Clients illimités', 'API access', 'Support prioritaire', 'White label']
+  }
+  ]
