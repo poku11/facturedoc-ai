@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+:root {
+  --font-dm-sans: 'DM Sans', system-ui, sans-serif;
+  --primary: #1A56DB;
+  --success: #10B981;
+  --warning: #F59E0B;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-dm-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: #1f2937;
+  background-color: #f9fafb;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-gray-700 px-4 py-2 rounded-lg font-semibold border border-gray-200 hover:bg-gray-50 transition-colors;
+  }
+
+  .input {
+    @apply w-full px-3.5 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition text-sm;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-gray-100 p-6;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-draft { @apply badge bg-gray-100 text-gray-600; }
+  .badge-sent { @apply badge bg-blue-100 text-blue-700; }
+  .badge-viewed { @apply badge bg-purple-100 text-purple-700; }
+  .badge-signed { @apply badge bg-indigo-100 text-indigo-700; }
+  .badge-paid { @apply badge bg-green-100 text-green-700; }
+  .badge-overdue { @apply badge bg-red-100 text-red-700; }
+  .badge-cancelled { @apply badge bg-gray-100 text-gray-400; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+}
