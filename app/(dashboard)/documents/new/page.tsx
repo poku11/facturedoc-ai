@@ -2,142 +2,183 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2, Zap, ArrowLeft, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
+import { TemplateGallery } from '@/components/documents/TemplateGallery'
+import { Button } from '@/components/ui/Button'
+import { Textarea } from '@/components/ui/Input'
+import type { DocumentType } from '@/lib/supabase/types'
 
 export default function NewDocumentPage() {
-  const [type, setType] = useState<'invoice' | 'quote'>('invoice')
-  const [userInput, setUserInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const router = useRouter()
+    const router = useRouter()
+    const [step, setStep] = useState<'template' | 'ai' | 'creating'>('template')
+    const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+    const [selectedType, setSelectedType] = useState<DocumentType>('devis')
+    const [aiDescription, setAiDescription] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState('')
 
-  async function handleAIGenerate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!userInput.trim()) return
+  const handleTemplateSelect = (templateId: string, type: DocumentType) => {
+        setSelectedTemplate(templateId)
+        setSelectedType(type)
+  }
 
-    setLoading(true)
-    setError('')
-
-    try {
-      const res = await fetch('/api/ai/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, userInput }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        if (data.upgrade_required) {
-          setError('Limite atteinte. Passez à un plan supérieur pour continuer.')
+  const handleContinue = () => {
+        if (!selectedTemplate) return
+        if (selectedTemplate.startsWith('ai-')) {
+                setStep('ai')
         } else {
-          setError(data.error || 'Erreur lors de la génération')
+                handleCreateBlank()
         }
-        setLoading(false)
-        return
-      }
-
-      router.push(`/documents/${data.document.id}`)
-    } catch {
-      setError('Erreur de connexion. Réessayez.')
-      setLoading(false)
-    }
   }
 
-  async function handleManual() {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
-      })
-      const data = await res.json()
-      if (res.ok) router.push(`/documents/${data.document.id}`)
-    } catch {
-      setError('Erreur lors de la création')
-    }
-    setLoading(false)
+  const handleCreateBlank = async () => {
+        setLoading(true)
+        setError('')
+        try {
+                const res = await fetch('/api/documents', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                                      type: selectedType,
+                                      templateId: selectedTemplate,
+                          }),
+                })
+                const data = await res.json()
+                if (!res.ok) throw new Error(data.error ?? 'Erreur creation')
+                router.push(`/documents/${data.document.id}`)
+        } catch (err) {
+                setError(err instanceof Error ? err.message : 'Erreur')
+                setLoading(false)
+        }
   }
 
-  return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <div className="flex items-center gap-3 mb-8">
-        <Link href="/documents" className="text-gray-400 hover:text-gray-600 transition">
-          ← Documents
-        </Link>
-        <span className="text-gray-300">/</span>
-        <h1 className="text-xl font-bold text-gray-900">Nouveau document</h1>
-      </div>
+  const handleAIGenerate = async () => {
+        if (!aiDescription.trim()) return
+        setLoading(true)
+        setError('')
+        setStep('creating')
+        try {
+                const res = await fetch('/api/ai/generate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                                      type: selectedType,
+                                      description: aiDescription,
+                          }),
+                })
+                const data = await res.json()
+                if (!res.ok) {
+                          if (data.upgrade_required) {
+                                      setError('Limite atteinte. Passez a un plan superieur pour continuer.')
+                          } else {
+                                      throw new Error(data.error ?? 'Erreur IA')
+                          }
+                          setStep('ai')
+                          return
+                }
+                router.push(`/documents/${data.document.id}`)
+        } catch (err) {
+                setError(err instanceof Error ? err.message : 'Erreur')
+                setStep('ai')
+        } finally {
+                setLoading(false)
+        }
+  }
 
-      {/* Type selector */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        {(['invoice', 'quote'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setType(t)}
-            className={`p-5 rounded-2xl border-2 text-left transition ${
-              type === t
-                ? 'border-primary bg-primary/5'
-                : 'border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            <div className="text-3xl mb-2">{t === 'invoice' ? '🧾' : '📋'}</div>
-            <div className="font-semibold text-gray-900">
-              {t === 'invoice' ? 'Facture' : 'Devis'}
-            </div>
-            <div className="text-sm text-gray-500 mt-1">
-              {t === 'invoice'
-                ? 'Demandez le paiement pour un service rendu'
-                : 'Proposez un prix avant de commencer'}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      {/* AI Generation */}
-      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xl">✨</span>
-          <h2 className="font-semibold text-gray-900">Générer avec l'IA</h2>
-        </div>
-        <form onSubmit={handleAIGenerate}>
-          <textarea
-            value={userInput}
-            onChange={e => setUserInput(e.target.value)}
-            placeholder={`Ex: "Prestation de développement web pour Client SA - 3 jours à 600€/jour, taux TVA 20%, paiement 30 jours"`}
-            rows={4}
-            className="w-full px-4 py-3 rounded-xl border border-blue-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none text-sm"
-          />
-          {error && <div className="mt-2 text-sm text-red-600">{error}</div>}
-          <button
-            type="submit"
-            disabled={loading || !userInput.trim()}
-            className="mt-3 w-full bg-primary text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
-                Génération en cours...
-              </>
-            ) : (
-              <>✨ Générer le document</>
-            )}
-          </button>
-        </form>
-      </div>
-
-      {/* Manual creation */}
-      <button
-        onClick={handleManual}
-        disabled={loading}
-        className="w-full py-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 hover:border-gray-400 hover:text-gray-600 transition font-medium text-sm"
-      >
-        Créer manuellement (document vide)
-      </button>
-    </div>
-  )
-}
+  if (step === 'creating') {
+        return (
+                <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
+                        <div className="relative">
+                                  <div className="w-20 h-20 rounded-2xl bg-purple-100 flex items-center justify-center">
+                                              <Zap size={36} className="text-purple-600" />
+                                  </div>div>
+                                  <Loader2 className="absolute -bottom-1 -right-1 w-7 h-7 animate-spin text-purple-500 bg-white rounded-full" />
+                        </div>div>
+                        <div className="text-center">
+                                  <h2 className="text-xl font-semibold text-gray-900">Generation en cours...</h2>h2>
+                                  <p className="text-gray-500 mt-1">Claude analyse votre demande et cree votre document</p>p>
+                        </div>div>
+                        <div className="flex gap-1.5">
+                          {[0, 1, 2].map(i => (
+                              <span key={i} className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
+                            ))}
+                        </div>div>
+                </div>div>
+              )
+  }
+  
+    return (
+          <div className="max-w-3xl mx-auto px-4 py-8">
+            {/* Header */}
+                <div className="mb-8">
+                        <Link href="/documents" className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-4 transition-colors">
+                                  <ArrowLeft size={15} /> Retour aux documents
+                        </Link>Link>
+                        <h1 className="text-2xl font-bold text-gray-900">Nouveau document</h1>h1>
+                        <p className="text-gray-500 mt-1">Choisissez un template ou laissez l'IA creer votre document</p>p>
+                </div>div>
+          
+            {step === 'template' && (
+                    <div className="space-y-6">
+                              <TemplateGallery onSelect={handleTemplateSelect} />
+                    
+                      {error && (
+                                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{error}</div>div>
+                              )}
+                    
+                              <div className="flex justify-end">
+                                          <Button
+                                                          onClick={handleContinue}
+                                                          disabled={!selectedTemplate || loading}
+                                                          loading={loading}
+                                                          className="flex items-center gap-2"
+                                                        >
+                                                        Continuer <ArrowRight size={15} />
+                                          </Button>Button>
+                              </div>div>
+                    </div>div>
+                )}
+          
+            {step === 'ai' && (
+                    <div className="space-y-6">
+                              <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl flex items-start gap-3">
+                                          <Zap className="text-purple-500 mt-0.5 flex-shrink-0" size={18} />
+                                          <div>
+                                                        <p className="text-sm font-semibold text-purple-900">Generation par IA</p>p>
+                                                        <p className="text-sm text-purple-700 mt-0.5">
+                                                                        Decrivez votre {selectedType} en langage naturel et Claude va le generer automatiquement.
+                                                        </p>p>
+                                          </div>div>
+                              </div>div>
+                    
+                              <Textarea
+                                            label="Decrivez votre document"
+                                            value={aiDescription}
+                                            onChange={e => setAiDescription(e.target.value)}
+                                            rows={5}
+                                            placeholder={`Ex: Devis pour le developpement d'un site web vitrine pour un restaurant parisien. Inclure la conception, le developpement et la maintenance pendant 1 an. Budget approximatif: 5000 euros.`}
+                                          />
+                    
+                      {error && (
+                                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{error}</div>div>
+                              )}
+                    
+                              <div className="flex justify-between">
+                                          <Button variant="outline" onClick={() => setStep('template')}>
+                                                        <ArrowLeft size={14} className="mr-1" /> Retour
+                                          </Button>Button>
+                                          <Button
+                                                          onClick={handleAIGenerate}
+                                                          disabled={!aiDescription.trim() || loading}
+                                                          loading={loading}
+                                                          className="flex items-center gap-2"
+                                                        >
+                                                        <Zap size={14} /> Generer avec l'IA
+                                          </Button>Button>
+                              </div>div>
+                    </div>div>
+                )}
+          </div>div>
+        )
+}</div>
